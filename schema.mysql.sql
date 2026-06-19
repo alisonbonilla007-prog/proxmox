@@ -60,6 +60,7 @@ CREATE TABLE nas (
     shortname      VARCHAR(64) NOT NULL,
     type           VARCHAR(16) DEFAULT 'other',
     secret         VARCHAR(64) NOT NULL,
+    server         VARCHAR(64) DEFAULT NULL,   -- FreeRADIUS stock client_query selects this
     mon_user       VARCHAR(64) DEFAULT '',
     mon_pass       VARCHAR(128) DEFAULT '',
     snmp_community VARCHAR(64) DEFAULT 'public',
@@ -162,6 +163,25 @@ CREATE TABLE radusergroup (
     groupname VARCHAR(64) NOT NULL DEFAULT '',
     priority  INT NOT NULL DEFAULT 1,
     KEY idx_rug_user (username)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+-- Referenced by stock FreeRADIUS per-request group queries (kept so no runtime errors).
+CREATE TABLE radgroupcheck (
+    id        INT AUTO_INCREMENT PRIMARY KEY,
+    groupname VARCHAR(64) NOT NULL DEFAULT '',
+    attribute VARCHAR(64) NOT NULL DEFAULT '',
+    op        CHAR(2) NOT NULL DEFAULT ':=',
+    value     VARCHAR(253) NOT NULL DEFAULT '',
+    KEY idx_rgc_group (groupname)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+
+CREATE TABLE radgroupreply (
+    id        INT AUTO_INCREMENT PRIMARY KEY,
+    groupname VARCHAR(64) NOT NULL DEFAULT '',
+    attribute VARCHAR(64) NOT NULL DEFAULT '',
+    op        CHAR(2) NOT NULL DEFAULT ':=',
+    value     VARCHAR(253) NOT NULL DEFAULT '',
+    KEY idx_rgr_group (groupname)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Stock FreeRADIUS radacct columns (+ tenant_id). Matches packaged queries.conf.

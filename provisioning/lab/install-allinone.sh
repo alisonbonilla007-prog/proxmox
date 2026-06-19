@@ -72,12 +72,19 @@ if ! "${ROOT_MYSQL[@]}" -N -e "SELECT 1 FROM ${DB_NAME}.tenants LIMIT 1" >/dev/n
     "${ROOT_MYSQL[@]}" "${DB_NAME}" < "${APP_DIR}/schema.mysql.sql"
     echo "    schema loaded"
 else echo "    schema already present"; fi
+# Migrate DBs created by an older schema so FreeRADIUS' stock queries work.
+"${ROOT_MYSQL[@]}" "${DB_NAME}" <<SQL || true
+ALTER TABLE nas ADD COLUMN IF NOT EXISTS server VARCHAR(64) DEFAULT NULL;
+CREATE TABLE IF NOT EXISTS radgroupcheck (id INT AUTO_INCREMENT PRIMARY KEY, groupname VARCHAR(64) NOT NULL DEFAULT '', attribute VARCHAR(64) NOT NULL DEFAULT '', op CHAR(2) NOT NULL DEFAULT ':=', value VARCHAR(253) NOT NULL DEFAULT '', KEY idx_rgc_group (groupname)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+CREATE TABLE IF NOT EXISTS radgroupreply (id INT AUTO_INCREMENT PRIMARY KEY, groupname VARCHAR(64) NOT NULL DEFAULT '', attribute VARCHAR(64) NOT NULL DEFAULT '', op CHAR(2) NOT NULL DEFAULT ':=', value VARCHAR(253) NOT NULL DEFAULT '', KEY idx_rgr_group (groupname)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
+SQL
 HASH=$(php -r "echo password_hash('${SUPERADMIN_PASS}', PASSWORD_BCRYPT);")
 "${ROOT_MYSQL[@]}" "${DB_NAME}" -e "INSERT INTO superadmins (username,password_hash) VALUES ('${SUPERADMIN_USER}','${HASH}') ON DUPLICATE KEY UPDATE password_hash=VALUES(password_hash);"
 
 echo "==> [4/7] WireGuard hub (${WG_HUB_TUNNEL_IP}, udp/${WG_PORT})"
 sysctl -w net.ipv4.ip_forward=1 >/dev/null
-grep -q '^net.ipv4.ip_forward=1' /etc/sysctl.conf || echo 'net.ipv4.ip_forward=1' >> /etc/sysctl.conf
+# Persist via sysctl.d (Debian 13 ships no /etc/sysctl.conf by default).
+echo 'net.ipv4.ip_forward=1' > /etc/sysctl.d/99-mesh.conf
 umask 077; mkdir -p /etc/wireguard
 [ -f /etc/wireguard/hub_private.key ] || wg genkey | tee /etc/wireguard/hub_private.key | wg pubkey > /etc/wireguard/hub_public.key
 HUB_PRIV=$(cat /etc/wireguard/hub_private.key); HUB_PUB=$(cat /etc/wireguard/hub_public.key)
@@ -105,6 +112,12 @@ if [ -f "$SQLMOD" ]; then
     sed -i "s|^\(\s*\)radius_db = .*|\1radius_db = \"${DB_NAME}\"|" "$SQLMOD"
     sed -i 's/^\(\s*\)#\?\s*read_clients = .*/\1read_clients = yes/' "$SQLMOD"
     sed -i 's/^\(\s*\)#\?\s*client_table = .*/\1client_table = "nas"/' "$SQLMOD"
+    # Debian's sql module ships a mysql{ tls{ ca_file=... } } pointing at a CA file
+    # that doesn't exist, which aborts startup. We talk to a localhost DB with no
+    # TLS, so comment those file refs out.
+    for k in ca_file ca_path certificate_file private_key_file; do
+        sed -i "s|^\(\s*\)${k} = |\1# ${k} = |" "$SQLMOD"
+    done
     ln -sf ../mods-available/sql /etc/freeradius/3.0/mods-enabled/sql
 fi
 SITE="/etc/freeradius/3.0/sites-available/default"
@@ -117,16 +130,16 @@ POOL="/etc/php/${PHP_VER}/fpm/pool.d/www.conf"
 sed -i '/# >>> MESH env/,/# <<< MESH env/d' "$POOL"
 cat >> "$POOL" <<EOF
 # >>> MESH env
-env[DB_DRIVER] = mysql
-env[DB_HOST] = localhost
-env[DB_NAME] = ${DB_NAME}
-env[DB_USER] = ${DB_APP_USER}
-env[DB_PASS] = ${DB_APP_PASS}
-env[APP_DOMAIN] = ${LAB_IP}
-env[WG_ENDPOINT] = ${WG_PUBLIC_ENDPOINT}
-env[WG_SERVER_PUBKEY] = ${HUB_PUB}
-env[WG_SUBNET] = ${WG_SUBNET}
-env[WG_RADIUS_IP] = ${WG_HUB_TUNNEL_IP}
+env[DB_DRIVER] = "mysql"
+env[DB_HOST] = "localhost"
+env[DB_NAME] = "${DB_NAME}"
+env[DB_USER] = "${DB_APP_USER}"
+env[DB_PASS] = "${DB_APP_PASS}"
+env[APP_DOMAIN] = "${LAB_IP}"
+env[WG_ENDPOINT] = "${WG_PUBLIC_ENDPOINT}"
+env[WG_SERVER_PUBKEY] = "${HUB_PUB}"
+env[WG_SUBNET] = "${WG_SUBNET}"
+env[WG_RADIUS_IP] = "${WG_HUB_TUNNEL_IP}"
 # <<< MESH env
 EOF
 systemctl restart "php${PHP_VER}-fpm"
