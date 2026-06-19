@@ -1,0 +1,32 @@
+# --- Secrets / per-deployment config (commit only the *.example versions) ---
+cluster.env
+lab.env
+*.env
+!*.env.example
+config.local.php
+admin_credentials.php
+mpesa_config.php
+
+# --- Generated WireGuard / TLS material (never commit private keys) ---
+*.key
+*_private.key
+*.pem
+wg_*.conf
+provisioning/**/*.priv
+
+# --- Local databases / generated data ---
+*.db
+*.sqlite
+*.sqlite3
+meshcloud.db
+
+# --- Logs (may contain PII / payment metadata) ---
+logs/
+*.log
+
+# --- Editor / OS cruft ---
+.vscode/
+.agents/
+.DS_Store
+*.swp
+*.tmp
