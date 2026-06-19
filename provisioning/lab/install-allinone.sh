@@ -107,8 +107,10 @@ if [ -f "$SQLMOD" ]; then
     sed -i 's/^\(\s*\)driver = .*/\1driver = "rlm_sql_${dialect}"/' "$SQLMOD"
     sed -i 's|^\(\s*\)server = .*|\1server = "localhost"|' "$SQLMOD"
     sed -i 's|^\(\s*\)#\?\s*port = .*|\tport = 3306|' "$SQLMOD"
-    sed -i "s|^\(\s*\)login = .*|\1login = \"${DB_RADIUS_USER}\"|" "$SQLMOD"
-    sed -i "s|^\(\s*\)password = .*|\1password = \"${DB_RADIUS_PASS}\"|" "$SQLMOD"
+    # login/password may ship commented on Debian; match optional '#' and only the
+    # first occurrence (the connection block) so we don't touch doc examples.
+    sed -i "0,/^[[:space:]]*#\?[[:space:]]*login[[:space:]]*=.*/s//\tlogin = \"${DB_RADIUS_USER}\"/" "$SQLMOD"
+    sed -i "0,/^[[:space:]]*#\?[[:space:]]*password[[:space:]]*=.*/s//\tpassword = \"${DB_RADIUS_PASS}\"/" "$SQLMOD"
     sed -i "s|^\(\s*\)radius_db = .*|\1radius_db = \"${DB_NAME}\"|" "$SQLMOD"
     sed -i 's/^\(\s*\)#\?\s*read_clients = .*/\1read_clients = yes/' "$SQLMOD"
     sed -i 's/^\(\s*\)#\?\s*client_table = .*/\1client_table = "nas"/' "$SQLMOD"
@@ -127,9 +129,11 @@ systemctl restart freeradius || echo "    !! FreeRADIUS failed — debug with: f
 
 echo "==> [6/7] PHP-FPM env + Caddy (plain HTTP on :80)"
 POOL="/etc/php/${PHP_VER}/fpm/pool.d/www.conf"
-sed -i '/# >>> MESH env/,/# <<< MESH env/d' "$POOL"
+# PHP-FPM pool files are INI: comments use ';', NOT '#'. Remove any old block of
+# either marker style, then write a ';'-commented one.
+sed -i '/[#;] >>> MESH env/,/[#;] <<< MESH env/d' "$POOL"
 cat >> "$POOL" <<EOF
-# >>> MESH env
+; >>> MESH env
 env[DB_DRIVER] = "mysql"
 env[DB_HOST] = "localhost"
 env[DB_NAME] = "${DB_NAME}"
@@ -140,7 +144,7 @@ env[WG_ENDPOINT] = "${WG_PUBLIC_ENDPOINT}"
 env[WG_SERVER_PUBKEY] = "${HUB_PUB}"
 env[WG_SUBNET] = "${WG_SUBNET}"
 env[WG_RADIUS_IP] = "${WG_HUB_TUNNEL_IP}"
-# <<< MESH env
+; <<< MESH env
 EOF
 systemctl restart "php${PHP_VER}-fpm"
 # Plain HTTP (no TLS in the lab). ":80" matches any host, so http://LAB_IP works.
