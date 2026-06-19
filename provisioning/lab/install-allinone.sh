@@ -32,6 +32,8 @@ PHP_VER=$(php -r 'echo PHP_MAJOR_VERSION.".".PHP_MINOR_VERSION;')
 PHP_SOCK="/run/php/php${PHP_VER}-fpm.sock"
 
 echo "==> [2/7] App code at /opt/mesh"
+# Allow root to run git here even after we chown the tree to www-data.
+git config --global --add safe.directory /opt/mesh 2>/dev/null || true
 if [ ! -d /opt/mesh/.git ]; then
     git clone --branch "$REPO_BRANCH" "$REPO_URL" /opt/mesh
 else git -C /opt/mesh pull --ff-only || true; fi
@@ -40,21 +42,38 @@ chown -R www-data:www-data /opt/mesh
 
 echo "==> [3/7] MariaDB (localhost) + schema + users + superadmin"
 systemctl enable --now mariadb
-mysql <<SQL
-ALTER USER 'root'@'localhost' IDENTIFIED BY '${DB_ROOT_PASS}';
+# Find a working root login and wait for the server to come up. A fresh MariaDB
+# authenticates root@localhost via unix_socket (sudo mysql, no password); a prior
+# run may already have set a password. We deliberately do NOT change root's auth,
+# so re-runs stay idempotent (sudo mysql keeps working every time).
+ROOT_MYSQL=()
+for _ in $(seq 1 30); do
+    if mysql -u root -e "SELECT 1" >/dev/null 2>&1; then ROOT_MYSQL=(mysql -u root); break; fi
+    if mysql -u root -p"${DB_ROOT_PASS}" -e "SELECT 1" >/dev/null 2>&1; then ROOT_MYSQL=(mysql -u root -p"${DB_ROOT_PASS}"); break; fi
+    sleep 1
+done
+if [ ${#ROOT_MYSQL[@]} -eq 0 ]; then
+    echo "!! Can't reach MariaDB as root (neither unix_socket nor DB_ROOT_PASS worked)."
+    echo "   If you set a different root password earlier, fix DB_ROOT_PASS in lab.env,"
+    echo "   or reset MariaDB (see LAB.md -> Troubleshooting), then re-run this script."
+    exit 1
+fi
+"${ROOT_MYSQL[@]}" <<SQL
 CREATE DATABASE IF NOT EXISTS ${DB_NAME} CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
 CREATE USER IF NOT EXISTS '${DB_APP_USER}'@'localhost'    IDENTIFIED BY '${DB_APP_PASS}';
+ALTER  USER               '${DB_APP_USER}'@'localhost'    IDENTIFIED BY '${DB_APP_PASS}';
 GRANT ALL PRIVILEGES ON ${DB_NAME}.* TO '${DB_APP_USER}'@'localhost';
 CREATE USER IF NOT EXISTS '${DB_RADIUS_USER}'@'localhost' IDENTIFIED BY '${DB_RADIUS_PASS}';
+ALTER  USER               '${DB_RADIUS_USER}'@'localhost' IDENTIFIED BY '${DB_RADIUS_PASS}';
 GRANT SELECT,INSERT,UPDATE,DELETE ON ${DB_NAME}.* TO '${DB_RADIUS_USER}'@'localhost';
 FLUSH PRIVILEGES;
 SQL
-if ! mysql -N -e "SELECT 1 FROM ${DB_NAME}.tenants LIMIT 1" >/dev/null 2>&1; then
-    mysql "${DB_NAME}" < "${APP_DIR}/schema.mysql.sql"
+if ! "${ROOT_MYSQL[@]}" -N -e "SELECT 1 FROM ${DB_NAME}.tenants LIMIT 1" >/dev/null 2>&1; then
+    "${ROOT_MYSQL[@]}" "${DB_NAME}" < "${APP_DIR}/schema.mysql.sql"
     echo "    schema loaded"
 else echo "    schema already present"; fi
 HASH=$(php -r "echo password_hash('${SUPERADMIN_PASS}', PASSWORD_BCRYPT);")
-mysql "${DB_NAME}" -e "INSERT INTO superadmins (username,password_hash) VALUES ('${SUPERADMIN_USER}','${HASH}') ON DUPLICATE KEY UPDATE password_hash=VALUES(password_hash);"
+"${ROOT_MYSQL[@]}" "${DB_NAME}" -e "INSERT INTO superadmins (username,password_hash) VALUES ('${SUPERADMIN_USER}','${HASH}') ON DUPLICATE KEY UPDATE password_hash=VALUES(password_hash);"
 
 echo "==> [4/7] WireGuard hub (${WG_HUB_TUNNEL_IP}, udp/${WG_PORT})"
 sysctl -w net.ipv4.ip_forward=1 >/dev/null

@@ -163,6 +163,21 @@ verify RADIUS auth, session accounting, and the dashboards — all offline.
   (ngrok URL set as the tenant Callback base), or use Step 8 to simulate.
 - **No router health data** → MikroTik needs the `mesh-monitor` REST user (in the
   .rsc) reachable on the tunnel; pfSense needs SNMP enabled on the WG interface.
+- **`git: detected dubious ownership in /opt/mesh`** → the tree is owned by
+  `www-data`. Run `sudo git config --global --add safe.directory /opt/mesh` once,
+  then retry (the installer now does this for you).
+- **`ERROR 1045 Access denied for user 'root'@'localhost'`** → an earlier run set
+  a MariaDB root password, so `sudo mysql` no longer works passwordlessly. The
+  installer now auto-detects this (it tries `DB_ROOT_PASS` from `lab.env`). If it
+  still can't connect, your root password differs from `DB_ROOT_PASS`; either set
+  the right value in `lab.env`, or reset MariaDB (you have no real data yet):
+  ```bash
+  sudo systemctl stop mariadb
+  sudo rm -rf /var/lib/mysql
+  sudo mariadb-install-db --user=mysql --auth-root-authentication-method=socket >/dev/null
+  sudo systemctl start mariadb        # root is back to passwordless unix_socket
+  ```
+  Then re-run `sudo bash install-allinone.sh`.
 
 ## Reset
 Re-running `install-allinone.sh` is safe (idempotent). To wipe data:
