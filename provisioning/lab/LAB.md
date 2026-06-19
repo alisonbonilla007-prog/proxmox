@@ -38,8 +38,8 @@ VM by hand (2 vCPU / 2–4 GB / 20 GB), static IP `192.168.1.50`, SSH enabled.
 
 ## Step 2 — Get the code + config onto the VM
 ```bash
-sudo git clone https://github.com/youruser/yourrepo.git /opt/mesh
-cd /opt/mesh/SAAS/provisioning/lab
+sudo git clone https://github.com/alisonbonilla007-prog/proxmox.git /opt/mesh
+cd /opt/mesh/provisioning/lab
 cp lab.env.example lab.env
 nano lab.env            # set LAB_IP, REPO_URL, passwords (lab defaults are fine)
 ```
@@ -78,7 +78,7 @@ Log into that tenant's admin: **http://192.168.1.50/admin?tenant=swiftnet**
 3. Paste that public key into the **Activate** box in onboarding.
 4. On the **lab VM**, register the peer:
    ```bash
-   cd /opt/mesh/SAAS/provisioning/lab
+   cd /opt/mesh/provisioning/lab
    sudo bash add-peer.sh <router_public_key> 10.66.1.1
    ```
 5. Confirm the tunnel: `sudo wg show` on the VM shows a recent handshake.
@@ -129,7 +129,7 @@ When you can't reach Safaricom, test the RADIUS/portal/dashboard path with the
 simulator. It marks a payment `success` and issues the **same** voucher account
 the real callback would (it does NOT bypass or remove M-Pesa — it's a test stub):
 ```bash
-cd /opt/mesh/SAAS/provisioning/lab
+cd /opt/mesh/provisioning/lab
 ENV="DB_DRIVER=mysql DB_HOST=localhost DB_NAME=meshcloud DB_USER=meshcloud DB_PASS=labapppass"
 
 # see pending payments from portal clicks:

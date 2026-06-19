@@ -19,7 +19,7 @@
 //
 // SQLite (no DB env): defaults to the local meshcloud.db used in dev.
 
-$root = dirname(__DIR__, 2); // .../SAAS
+$root = dirname(__DIR__, 2); // app root (repo root: src/, config.php live here)
 require_once $root . '/src/Database.php';
 require_once $root . '/src/helpers.php';
 require_once $root . '/src/Mpesa.php';
