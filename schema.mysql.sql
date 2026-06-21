@@ -185,6 +185,9 @@ CREATE TABLE radgroupreply (
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 
 -- Stock FreeRADIUS radacct columns (+ tenant_id). Matches packaged queries.conf.
+-- NOTE: stock accounting INSERTs don't set tenant_id, so install-allinone.sh adds
+-- a BEFORE INSERT trigger (radacct_set_tenant) that derives it from radcheck by
+-- username. Without it, per-tenant Live Sessions/active-user views stay empty.
 CREATE TABLE radacct (
     radacctid           BIGINT AUTO_INCREMENT PRIMARY KEY,
     tenant_id           INT NOT NULL DEFAULT 0,

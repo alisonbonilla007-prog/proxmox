@@ -61,14 +61,16 @@ foreach ($tenants as $t) { if (!empty($t['last_sample']) && (time() - strtotime(
         <?php foreach ($tenants as $t): $sub = $t['sub_status'] ?: 'none';
           $subClass = $sub==='active'||$sub==='trial' ? 'b-success' : ($sub==='past_due' ? 'b-pending' : 'b-failed');
           $rUp = !empty($t['last_sample']) && (time() - strtotime($t['last_sample'])) < 600;
-          $cpu = $t['last_cpu']; ?>
+          $cpu = $t['last_cpu'];
+          $wgStatus = $t['wg_status'] ?: 'none';
+          $hsAge = !empty($t['wg_handshake']) ? (time() - strtotime($t['wg_handshake'])) : null; ?>
           <tr>
             <td><strong><?= e($t['name']) ?></strong><div class="mono" style="color:var(--muted-2);font-size:.72rem"><a style="color:var(--accent-2)" href="/?tenant=<?= e($t['slug']) ?>"><?= e($t['slug']) ?> ↗</a></div></td>
             <td class="mono"><?= (int)$t['pkgs'] ?></td>
             <td><?= kes($t['revenue']) ?></td>
             <td class="mono"><?= (int)$t['online'] ?></td>
-            <td><span class="badge <?= ($t['wg_status']??'')==='connected'?'b-online':'b-pending' ?>"><?= e($t['wg_status'] ?: 'none') ?></span></td>
-            <td><?php if ($rUp): ?><span class="badge b-online">up</span> <span class="mono" style="color:<?= (int)$cpu>=85?'var(--warn)':'var(--muted)' ?>"><?= (int)$cpu ?>%</span><?php else: ?><span class="badge b-offline">—</span><?php endif; ?><?php if ((int)($t['open_alerts']??0)): ?> <span class="badge b-pending"><?= (int)$t['open_alerts'] ?>⚠</span><?php endif; ?></td>
+            <td><span class="badge <?= $wgStatus==='connected'?'b-online':($wgStatus==='activated'?'b-pending':'b-failed') ?>"><?= e($wgStatus) ?></span><?php if ($hsAge!==null): ?><div class="mono" style="color:var(--muted-2);font-size:.68rem">⇄ <?= e(fmtUptime($hsAge)) ?> ago</div><?php endif; ?></td>
+            <td><?php if ($rUp): ?><span class="badge b-online">up</span> <span class="mono" style="color:<?= (int)$cpu>=85?'var(--warn)':'var(--muted)' ?>"><?= (int)$cpu ?>%</span><?php else: ?><span class="badge b-offline">—</span><?php endif; ?><?php if (!empty($t['nas_type']) && $t['nas_type']!=='other'): ?> <span class="mono" style="color:var(--muted-2);font-size:.68rem"><?= e($t['nas_type']) ?></span><?php endif; ?><?php if ((int)($t['open_alerts']??0)): ?> <span class="badge b-pending"><?= (int)$t['open_alerts'] ?>⚠</span><?php endif; ?></td>
             <td><span class="badge <?= $subClass ?>"><?= e($sub) ?></span><div class="mono" style="color:var(--muted-2);font-size:.68rem"><?= e($t['period_end'] ? substr($t['period_end'],0,10) : '—') ?></div></td>
             <td><span class="badge <?= $t['status']==='active'?'b-success':'b-failed' ?>"><?= e($t['status']) ?></span></td>
             <td style="white-space:nowrap">

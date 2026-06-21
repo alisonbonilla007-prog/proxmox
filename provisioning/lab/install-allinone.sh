@@ -78,6 +78,29 @@ ALTER TABLE nas ADD COLUMN IF NOT EXISTS server VARCHAR(64) DEFAULT NULL;
 CREATE TABLE IF NOT EXISTS radgroupcheck (id INT AUTO_INCREMENT PRIMARY KEY, groupname VARCHAR(64) NOT NULL DEFAULT '', attribute VARCHAR(64) NOT NULL DEFAULT '', op CHAR(2) NOT NULL DEFAULT ':=', value VARCHAR(253) NOT NULL DEFAULT '', KEY idx_rgc_group (groupname)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 CREATE TABLE IF NOT EXISTS radgroupreply (id INT AUTO_INCREMENT PRIMARY KEY, groupname VARCHAR(64) NOT NULL DEFAULT '', attribute VARCHAR(64) NOT NULL DEFAULT '', op CHAR(2) NOT NULL DEFAULT ':=', value VARCHAR(253) NOT NULL DEFAULT '', KEY idx_rgr_group (groupname)) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4;
 SQL
+# Stamp tenant_id on accounting rows so the per-tenant dashboards (Live Sessions,
+# active users) actually populate. Stock FreeRADIUS accounting INSERTs don't know
+# about tenant_id, so a BEFORE INSERT trigger derives it from the namespaced
+# username via radcheck. Idempotent (drop+recreate) + one-time backfill. The
+# quoted heredoc keeps $$ literal for the trigger body.
+"${ROOT_MYSQL[@]}" "${DB_NAME}" <<'SQL' || true
+DROP TRIGGER IF EXISTS radacct_set_tenant;
+DELIMITER $$
+CREATE TRIGGER radacct_set_tenant BEFORE INSERT ON radacct
+FOR EACH ROW
+BEGIN
+  IF NEW.tenant_id IS NULL OR NEW.tenant_id = 0 THEN
+    SET NEW.tenant_id = COALESCE(
+      (SELECT tenant_id FROM radcheck
+        WHERE username = NEW.username AND attribute = 'Cleartext-Password' LIMIT 1), 0);
+  END IF;
+END$$
+DELIMITER ;
+UPDATE radacct ra
+  JOIN radcheck rc ON rc.username = ra.username AND rc.attribute = 'Cleartext-Password'
+   SET ra.tenant_id = rc.tenant_id
+ WHERE ra.tenant_id = 0;
+SQL
 HASH=$(php -r "echo password_hash('${SUPERADMIN_PASS}', PASSWORD_BCRYPT);")
 "${ROOT_MYSQL[@]}" "${DB_NAME}" -e "INSERT INTO superadmins (username,password_hash) VALUES ('${SUPERADMIN_USER}','${HASH}') ON DUPLICATE KEY UPDATE password_hash=VALUES(password_hash);"
 
@@ -124,6 +147,36 @@ if [ -f "$SQLMOD" ]; then
 fi
 SITE="/etc/freeradius/3.0/sites-available/default"
 [ -f "$SITE" ] && { sed -i 's/^\(\s*\)-sql$/\1sql/' "$SITE" 2>/dev/null || true; sed -i 's/^\(\s*\)#\s*sql$/\1sql/' "$SITE" 2>/dev/null || true; }
+
+# Per-voucher TOTAL-time budget (stops a time voucher being reused after expiry).
+# A no-reset sqlcounter sums acctsessiontime per user, sets Session-Timeout to the
+# REMAINING budget each auth, and rejects once Max-All-Session is spent. Vouchers
+# carry Max-All-Session in radcheck (see src/Mpesa.php :: issueVoucher). The quoted
+# heredoc keeps ${key} literal for FreeRADIUS to expand at runtime.
+cat > /etc/freeradius/3.0/mods-available/meshcounter <<'EOF'
+sqlcounter noresetcounter {
+    sql_module_instance = sql
+    dialect = "mysql"
+    counter_name = Max-All-Session-Time
+    check_name = Max-All-Session
+    reply_name = Session-Timeout
+    key = User-Name
+    reset = never
+    query = "SELECT IFNULL(SUM(acctsessiontime),0) FROM radacct WHERE username='%{${key}}'"
+}
+EOF
+ln -sf ../mods-available/meshcounter /etc/freeradius/3.0/mods-enabled/meshcounter
+# Call the counter inside authorize{} (just before pap), once. A module in
+# mods-enabled only runs if a processing section references it.
+if [ -f "$SITE" ] && ! grep -q 'noresetcounter' "$SITE"; then
+    awk '
+      /^authorize[[:space:]]*\{/ { inauth=1 }
+      inauth && !done && /^[[:space:]]*pap[[:space:]]*$/ { print "\tnoresetcounter"; done=1 }
+      { print }
+      inauth && /^\}/ { inauth=0 }
+    ' "$SITE" > "$SITE.mesh" && mv "$SITE.mesh" "$SITE"
+fi
+
 systemctl enable freeradius >/dev/null
 systemctl restart freeradius || echo "    !! FreeRADIUS failed — debug with: freeradius -X"
 

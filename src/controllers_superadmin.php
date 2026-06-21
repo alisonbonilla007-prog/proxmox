@@ -64,7 +64,9 @@ function handle_superadmin(string $path, PDO $pdo, Auth $auth, Tenancy $tenancy,
         }
         if ($action === 'activate_peer') {
             $tid = (int)$_POST['tenant_id'];
-            $ok = (new Provision($pdo, $config))->savePublicKey($tid, $_POST['public_key'] ?? '');
+            $prov = new Provision($pdo, $config);
+            $ok = $prov->savePublicKey($tid, $_POST['public_key'] ?? '');
+            if ($ok && !empty($_POST['router_type'])) $prov->setRouterType($tid, $_POST['router_type']);
             flash($ok ? 'success' : 'error', $ok ? 'Router public key saved — peer activated.' : 'Invalid public key format.');
             redirect('/superadmin/onboarding?tenant_id=' . $tid);
         }
@@ -82,6 +84,9 @@ function handle_superadmin(string $path, PDO $pdo, Auth $auth, Tenancy $tenancy,
             'tenant' => $tenant, 'peer' => $peer,
             'mikrotik' => $prov->mikrotikScript($tenant, $peer),
             'pfsense'  => $prov->pfsenseSteps($tenant, $peer),
+            'hotspotLogin' => $prov->hotspotLogin($tenant),
+            'portalUrl' => $prov->portalUrl($tenant),
+            'routerType' => $prov->routerType($tid),
             'serverPeer' => $prov->serverPeerBlock($tenant, $peer),
             'serverCmd'  => $prov->serverPeerCommand($peer),
             'isSuper' => true,
@@ -97,6 +102,9 @@ function handle_superadmin(string $path, PDO $pdo, Auth $auth, Tenancy $tenancy,
             (SELECT COALESCE(SUM(amount),0) FROM payments p WHERE p.tenant_id = t.id AND p.status='success') AS revenue,
             (SELECT COUNT(*) FROM radacct r WHERE r.tenant_id = t.id AND r.acctstoptime IS NULL) AS online,
             (SELECT status FROM wg_peers w WHERE w.tenant_id = t.id ORDER BY w.id LIMIT 1) AS wg_status,
+            (SELECT last_handshake FROM wg_peers w WHERE w.tenant_id = t.id ORDER BY w.id LIMIT 1) AS wg_handshake,
+            (SELECT type FROM nas n WHERE n.tenant_id = t.id ORDER BY n.id LIMIT 1) AS nas_type,
+            (SELECT shortname FROM nas n WHERE n.tenant_id = t.id ORDER BY n.id LIMIT 1) AS nas_name,
             (SELECT COUNT(*) FROM alerts a WHERE a.tenant_id = t.id AND a.resolved_at IS NULL) AS open_alerts,
             (SELECT cpu_load FROM device_metrics d WHERE d.tenant_id = t.id ORDER BY d.id DESC LIMIT 1) AS last_cpu,
             (SELECT sampled_at FROM device_metrics d WHERE d.tenant_id = t.id ORDER BY d.id DESC LIMIT 1) AS last_sample

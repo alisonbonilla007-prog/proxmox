@@ -7,6 +7,9 @@ $serverCmd = $serverCmd ?? '';
 $activateAction = $activateAction ?? '/superadmin';
 $backUrl = $backUrl ?? '/superadmin';
 $backLabel = $backLabel ?? '← Fleet console';
+$routerType = $routerType ?? 'other';
+$hotspotLogin = $hotspotLogin ?? '';
+$portalUrl = $portalUrl ?? ('https://' . $tenant['slug'] . '.' . ($config['app_domain'] ?? ''));
 ?>
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -38,7 +41,7 @@ pre{background:rgba(0,0,0,.4);border:1px solid var(--line);border-radius:12px;pa
   <div class="panel card">
     <h2>Connection parameters</h2>
     <div class="kv">
-      <span class="k">Portal URL</span><span class="v">https://<?= e($tenant['slug']) ?>.<?= e($config['app_domain']) ?></span>
+      <span class="k">Portal URL</span><span class="v"><?= e($portalUrl) ?></span>
       <span class="k">Hub endpoint</span><span class="v"><?= e($peer['endpoint']) ?></span>
       <span class="k">Hub public key</span><span class="v"><?= e($peer['server_pubkey']) ?></span>
       <span class="k">Tunnel IP (router)</span><span class="v"><?= e($peer['assigned_ip']) ?>/16</span>
@@ -63,11 +66,24 @@ pre{background:rgba(0,0,0,.4);border:1px solid var(--line);border-radius:12px;pa
   </div>
 
   <div class="panel card">
-    <h2>2 · Activate the tunnel</h2>
+    <h2>2 · Captive portal page <span class="mono" style="color:var(--muted-2);font-size:.72rem">(MikroTik)</span></h2>
+    <p class="sub">Replace the router's <span class="mono">hotspot/login.html</span> with this so unauthenticated users land on your branded portal (and can buy or log in with a voucher). In <b>Winbox/WebFig → Files</b>, open the <span class="mono">hotspot</span> folder and drag this in, overwriting <span class="mono">login.html</span>. pfSense uses its own captive-portal page (see the pfSense tab).</p>
+    <button class="btn btn-ghost btn-sm copy" onclick="cp('hl')">Copy</button>
+    <pre id="hl"><?= e($hotspotLogin) ?></pre>
+  </div>
+
+  <div class="panel card">
+    <h2>3 · Activate the tunnel</h2>
     <p class="sub">After running the config, the router prints its <b>public key</b>. Paste it here to activate the peer on the hub.</p>
     <form method="post" action="<?= e($activateAction) ?>">
       <input type="hidden" name="csrf" value="<?= e($csrf) ?>"><input type="hidden" name="action" value="activate_peer">
       <?php if ($isSuper): ?><input type="hidden" name="tenant_id" value="<?= (int)$tenant['id'] ?>"><?php endif; ?>
+      <label class="lbl">Router platform</label>
+      <select class="input" name="router_type">
+        <option value="mikrotik" <?= $routerType==='mikrotik'?'selected':'' ?>>MikroTik (RouterOS)</option>
+        <option value="pfsense" <?= $routerType==='pfsense'?'selected':'' ?>>pfSense</option>
+      </select>
+      <div class="sub" style="margin:.3rem 0 .9rem;font-size:.78rem">Pick the router you configured above — this selects how MESH polls it for health (RouterOS REST vs SNMP).</div>
       <label class="lbl">Router public key</label>
       <input class="input" name="public_key" placeholder="base64 public key from the router" value="<?= e($peer['public_key']) ?>">
       <button class="btn btn-primary" type="submit" style="margin-top:1rem">Activate peer</button>
@@ -76,7 +92,7 @@ pre{background:rgba(0,0,0,.4);border:1px solid var(--line);border-radius:12px;pa
 
   <?php if ($isSuper): ?>
   <div class="panel card">
-    <h2>3 · Hub side (operator)</h2>
+    <h2>4 · Hub side (operator)</h2>
     <p class="sub">Add this peer to the WireGuard hub. Either drop the block into <span class="mono">wg0.conf</span> or apply it live with the command (no restart).</p>
     <button class="btn btn-ghost btn-sm copy" onclick="cp('sp')">Copy</button>
     <pre id="sp"><?= e($serverPeer) ?></pre>

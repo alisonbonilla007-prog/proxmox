@@ -1,7 +1,15 @@
-<?php /* tenant portal — vars: $tenant,$vouchers,$config */
+<?php /* tenant portal — vars: $tenant,$vouchers,$config,$gwctx,$routerKind */
 $accent = $tenant['brand_color'] ?: '#25f4a7';
 $slug = $tenant['slug'];
 $qs = '?tenant=' . rawurlencode($slug); // keeps tenant scope for API calls in local/testing
+$gwctx = $gwctx ?? ['gw'=>'','dst'=>'','mac'=>'','err'=>'','zone'=>'','redirurl'=>''];
+$routerKind = $routerKind ?? 'other';
+// We can hand the user straight onto the WiFi when we arrived via the router's
+// captive portal: MikroTik gives a gateway login URL (gw); pfSense gives a zone.
+$gwAction = $routerKind === 'pfsense' ? ($gwctx['gw'] ?: $gwctx['redirurl']) : $gwctx['gw'];
+$hasGateway = $gwAction !== '';
+$userField = $routerKind === 'pfsense' ? 'auth_user' : 'username';
+$passField = $routerKind === 'pfsense' ? 'auth_pass' : 'password';
 ?>
 <!DOCTYPE html><html lang="en"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width, initial-scale=1">
@@ -40,6 +48,11 @@ header{display:flex;align-items:center;justify-content:space-between;padding:1.5
 .creds .r{display:flex;justify-content:space-between;padding:.35rem 0}.creds .r+.r{border-top:1px solid var(--line)}
 .creds .k{color:var(--muted);font-size:.82rem}.creds .v{font-family:var(--fm);color:var(--accent);font-weight:600}
 .tiny{color:var(--muted-2);font-size:.76rem}.muted{color:var(--muted);font-size:.9rem}
+.login-card{margin:0 0 3rem;padding:1.5rem;border-radius:var(--radius);background:var(--glass);border:1px solid var(--line)}
+.login-inner{max-width:420px;margin:0 auto}
+.login-head{margin-bottom:1rem}
+.login-form{display:grid;gap:.7rem}
+.btn-connect{width:100%;margin-top:.4rem}
 .foot{text-align:center;padding:2rem 0 3rem;color:var(--muted-2);font-size:.78rem}
 </style></head><body>
 <div class="bg-glow"></div><div class="bg-grid"></div>
@@ -71,6 +84,30 @@ header{display:flex;align-items:center;justify-content:space-between;padding:1.5
       <div class="muted">No packages available yet.</div>
     <?php endif; ?>
   </div>
+
+  <?php if ($hasGateway): ?>
+  <section class="login-card">
+    <div class="login-inner">
+      <div class="login-head">
+        <div class="v-name">Already have a voucher?</div>
+        <div class="muted" style="font-size:.86rem">Enter your voucher details to get back online with your remaining time.</div>
+      </div>
+      <?php if ($gwctx['err'] !== ''): ?><div class="flash flash-error" style="margin:.6rem 0"><?= e($gwctx['err']) ?></div><?php endif; ?>
+      <form class="login-form" method="post" action="<?= e($gwAction) ?>">
+        <input type="hidden" name="dst" value="<?= e($gwctx['dst']) ?>">
+        <input type="hidden" name="popup" value="true">
+        <?php if ($routerKind === 'pfsense'): ?>
+          <input type="hidden" name="accept" value="Continue">
+          <input type="hidden" name="zone" value="<?= e($gwctx['zone']) ?>">
+          <?php if ($gwctx['redirurl'] !== ''): ?><input type="hidden" name="redirurl" value="<?= e($gwctx['redirurl']) ?>"><?php endif; ?>
+        <?php endif; ?>
+        <input class="input" name="<?= e($userField) ?>" placeholder="Voucher username" autocomplete="username" required>
+        <input class="input" name="<?= e($passField) ?>" type="text" placeholder="Voucher password" autocomplete="current-password" required>
+        <button class="btn btn-primary" type="submit">Log in &amp; connect</button>
+      </form>
+    </div>
+  </section>
+  <?php endif; ?>
 </div>
 <div class="foot">Powered by MESH Cloud · <?= e($tenant['name']) ?></div>
 
@@ -100,7 +137,12 @@ header{display:flex;align-items:center;justify-content:space-between;padding:1.5
       <h2 class="fd" style="font-weight:600">✅ Payment confirmed</h2>
       <p class="muted" style="margin-top:.3rem">Your voucher is ready — save these.</p>
       <div class="creds"><div class="r"><span class="k">Username</span><span class="v" id="m-user"></span></div><div class="r"><span class="k">Password</span><span class="v" id="m-pass"></span></div></div>
-      <p class="tiny">Use these on the WiFi login page to connect.</p>
+      <?php if ($hasGateway): ?>
+        <button class="btn btn-primary btn-connect" id="connectBtn">Connect now →</button>
+        <p class="tiny" style="margin-top:.6rem">Saves your voucher and puts you online.</p>
+      <?php else: ?>
+        <p class="tiny">Use these on the WiFi login page to connect.</p>
+      <?php endif; ?>
     </div>
     <div class="step center" id="s-fail">
       <h2 class="fd" style="font-weight:600">❌ Payment failed</h2>
@@ -112,6 +154,23 @@ header{display:flex;align-items:center;justify-content:space-between;padding:1.5
 <script>
 (function(){
   const QS=<?= json_encode($qs) ?>;
+  // Captive-portal gateway handoff (empty unless we arrived via the router).
+  const GW=<?= json_encode($gwAction) ?>, ROUTER=<?= json_encode($routerKind) ?>;
+  const DST=<?= json_encode($gwctx['dst']) ?>, ZONE=<?= json_encode($gwctx['zone']) ?>, REDIR=<?= json_encode($gwctx['redirurl']) ?>;
+  const UF=<?= json_encode($userField) ?>, PF=<?= json_encode($passField) ?>;
+  let creds=null;
+  // Log the freshly-issued voucher into the gateway by POSTing a real form to it
+  // (full navigation, so no cross-origin fetch). Field names vary by router.
+  function connectNow(){
+    if(!GW||!creds) return;
+    const fm=document.createElement('form'); fm.method='post'; fm.action=GW;
+    const add=(n,v)=>{const i=document.createElement('input');i.type='hidden';i.name=n;i.value=v;fm.appendChild(i);};
+    add(UF,creds.u); add(PF,creds.p);
+    if(ROUTER==='pfsense'){add('accept','Continue'); add('zone',ZONE); if(REDIR)add('redirurl',REDIR);}
+    else {add('dst',DST); add('popup','true');}
+    document.body.appendChild(fm); fm.submit();
+  }
+  const cbtn=document.getElementById('connectBtn'); if(cbtn) cbtn.addEventListener('click',connectNow);
   const ov=document.getElementById('ov'),f=document.getElementById('payf'),err=document.getElementById('m-err'),pb=document.getElementById('payb');
   const steps={phone:'s-phone',proc:'s-proc',ok:'s-ok',fail:'s-fail'};let timer=null;
   const show=k=>{Object.values(steps).forEach(id=>document.getElementById(id).classList.remove('active'));document.getElementById(steps[k]).classList.add('active');};
@@ -132,7 +191,7 @@ header{display:flex;align-items:center;justify-content:space-between;padding:1.5
   });
   function poll(id){let n=0;const max=30;(function chk(){
     fetch('check_payment.php'+QS+'&payment_id='+encodeURIComponent(id)).then(r=>r.json()).then(d=>{
-      if(d.status==='success'){document.getElementById('m-user').textContent=d.username||'';document.getElementById('m-pass').textContent=d.password||'';show('ok');}
+      if(d.status==='success'){creds={u:d.username||'',p:d.password||''};document.getElementById('m-user').textContent=creds.u;document.getElementById('m-pass').textContent=creds.p;show('ok');}
       else if(d.status==='failed'){document.getElementById('m-fail').textContent='The payment was cancelled or declined.';show('fail');}
       else if(n>=max){document.getElementById('m-fail').textContent='Payment timed out. If charged, contact support.';show('fail');}
       else{n++;timer=setTimeout(chk,3000);}

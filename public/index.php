@@ -127,7 +127,29 @@ if ($path === '/') {
     $tenant = need_tenant($tenant);
     $st = $pdo->prepare("SELECT * FROM vouchers WHERE tenant_id = ? ORDER BY price ASC");
     $st->execute([$tenant['id']]);
-    echo view($VIEWS . '/portal.php', ['tenant' => $tenant, 'vouchers' => $st->fetchAll(), 'config' => $config]);
+
+    // Captive-portal handoff params (set by the router's login page redirect):
+    //   MikroTik -> gw=link-login-only, dst=link-orig, mac, err
+    //   pfSense  -> zone, redirurl
+    // They let the portal log the user into the gateway after buy/voucher login.
+    $gw = (string)($_GET['gw'] ?? '');
+    $gwctx = [
+        'gw'       => preg_match('#^https?://#i', $gw) ? $gw : '',  // only accept a real URL
+        'dst'      => (string)($_GET['dst'] ?? ''),
+        'mac'      => (string)($_GET['mac'] ?? ''),
+        'err'      => (string)($_GET['err'] ?? ''),
+        'zone'     => preg_replace('/[^A-Za-z0-9_\-]/', '', (string)($_GET['zone'] ?? '')),
+        'redirurl' => preg_match('#^https?://#i', (string)($_GET['redirurl'] ?? '')) ? $_GET['redirurl'] : '',
+    ];
+    $nt = $pdo->prepare("SELECT type FROM nas WHERE tenant_id = ? ORDER BY id LIMIT 1");
+    $nt->execute([$tenant['id']]);
+    $nasType = $nt->fetchColumn() ?: 'other';
+    $routerKind = $gwctx['zone'] !== '' ? 'pfsense' : ($gwctx['gw'] !== '' ? 'mikrotik' : $nasType);
+
+    echo view($VIEWS . '/portal.php', [
+        'tenant' => $tenant, 'vouchers' => $st->fetchAll(), 'config' => $config,
+        'gwctx' => $gwctx, 'routerKind' => $routerKind,
+    ]);
     exit;
 }
 

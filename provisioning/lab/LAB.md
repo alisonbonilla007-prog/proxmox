@@ -81,9 +81,16 @@ Log into that tenant's admin: **http://192.168.1.50/admin?tenant=swiftnet**
    cd /opt/mesh/provisioning/lab
    sudo bash add-peer.sh <router_public_key> 10.66.1.1
    ```
-5. Confirm the tunnel: `sudo wg show` on the VM shows a recent handshake.
-6. Point the MikroTik hotspot's login page at
-   `http://192.168.1.50/?tenant=swiftnet` (walled-garden already allows it).
+5. Confirm the tunnel: `sudo wg show` on the VM shows a recent handshake. On the
+   onboarding page pick the **Router platform** (MikroTik) when you Activate —
+   this tells MESH how to poll it. Within ~2 min the tunnel flips to
+   **connected** and **Network** starts showing CPU/uptime.
+6. Replace the hotspot login page so clients land on your portal: copy the
+   **Captive portal page (MikroTik)** from onboarding (step 2), then in
+   **Winbox/WebFig → Files → hotspot/** drag it in, overwriting `login.html`.
+   It redirects users to `http://192.168.1.50/?tenant=swiftnet` carrying the
+   gateway login URL, so the portal's **Connect now** button and the
+   **"Already have a voucher?"** login form can log them straight into the WiFi.
 
 ### B) pfSense
 1. Tenant admin → **Connect router** → follow the **pfSense (steps)** tab:

@@ -81,7 +81,11 @@ class Mpesa
 
     /**
      * Issue a namespaced RADIUS voucher account for a successful payment.
-     * Session-Timeout is written to radreply (enforced by the NAS).
+     * Time-limited vouchers store a TOTAL budget as Max-All-Session (radcheck).
+     * The FreeRADIUS no-reset sqlcounter (see install-allinone.sh) then sets
+     * Session-Timeout to the REMAINING budget on every auth and rejects once it's
+     * spent — so a voucher can't be reused after its time runs out, while a
+     * partially-used one can still log back in for the leftover time.
      */
     public function issueVoucher(array $voucher): array
     {
@@ -98,7 +102,9 @@ class Mpesa
             ->execute([$tid, $username, $password]);
 
         if ((int)$voucher['time_limit'] > 0) {
-            $this->pdo->prepare("INSERT INTO radreply (tenant_id, username, attribute, op, value) VALUES (?, ?, 'Session-Timeout', ':=', ?)")
+            // Total lifetime budget (check item). sqlcounter enforces it across
+            // reconnects and derives the per-session Session-Timeout from it.
+            $this->pdo->prepare("INSERT INTO radcheck (tenant_id, username, attribute, op, value) VALUES (?, ?, 'Max-All-Session', ':=', ?)")
                 ->execute([$tid, $username, (int)$voucher['time_limit']]);
         }
         if (!empty($voucher['bandwidth_limit'])) {

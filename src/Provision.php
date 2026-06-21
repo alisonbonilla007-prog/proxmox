@@ -42,13 +42,28 @@ class Provision
         return $st->fetch();
     }
 
-    /** Persist the router's public key + mark connected-pending. */
+    /** Persist the router's public key + mark the peer 'activated'. */
     public function savePublicKey(int $tenantId, string $pubkey): bool
     {
         $pubkey = trim($pubkey);
         if (!preg_match('#^[A-Za-z0-9+/]{42,44}={0,2}$#', $pubkey)) return false;
-        $st = $this->pdo->prepare("UPDATE wg_peers SET public_key = ? WHERE tenant_id = ?");
+        // Key present => 'activated'. A real WireGuard handshake later promotes it
+        // to 'connected' (see monitoring/poll.php :: sync_wg_handshakes).
+        $st = $this->pdo->prepare("UPDATE wg_peers SET public_key = ?, status = 'activated' WHERE tenant_id = ?");
         return $st->execute([$pubkey, $tenantId]);
+    }
+
+    /** Persist the router platform on the tenant's NAS row (mikrotik|pfsense|other). */
+    public function setRouterType(int $tenantId, string $type): void
+    {
+        $type = in_array($type, ['mikrotik', 'pfsense'], true) ? $type : 'other';
+        $this->pdo->prepare("UPDATE nas SET type = ? WHERE tenant_id = ?")->execute([$type, $tenantId]);
+    }
+
+    /** The router platform recorded for the tenant ('other' until chosen). */
+    public function routerType(int $tenantId): string
+    {
+        return (string)($this->nasRow($tenantId)['type'] ?? 'other');
     }
 
     public function nasSecret(int $tenantId): string
@@ -63,10 +78,30 @@ class Provision
         return $st->fetch() ?: [];
     }
 
+    /**
+     * Customer-facing portal URL. In production tenants live at a real subdomain
+     * (https://<slug>.<domain>/); in the lab APP_DOMAIN is the VM's IP, which has
+     * no DNS, so we use the reachable http://<ip>/?tenant=<slug> form instead.
+     */
+    public function portalUrl(array $tenant): string
+    {
+        $domain = $this->config['app_domain'];
+        return filter_var($domain, FILTER_VALIDATE_IP)
+            ? 'http://' . $domain . '/?tenant=' . rawurlencode($tenant['slug'])
+            : 'https://' . $tenant['slug'] . '.' . $domain . '/';
+    }
+
+    /** The portal host used for walled-garden rules (bare IP in the lab). */
+    public function portalHost(array $tenant): string
+    {
+        $domain = $this->config['app_domain'];
+        return filter_var($domain, FILTER_VALIDATE_IP) ? $domain : $tenant['slug'] . '.' . $domain;
+    }
+
     private function vars(array $tenant, array $peer): array
     {
         $wg = $this->config['wg'];
-        $portalHost = $tenant['slug'] . '.' . $this->config['app_domain'];
+        $portalHost = $this->portalHost($tenant);
         $nas = $this->nasRow((int)$tenant['id']);
         return [
             '{{SLUG}}'          => $tenant['slug'],
@@ -81,8 +116,19 @@ class Provision
             '{{MON_PASS}}'      => $nas['mon_pass'] ?: 'change-me',
             '{{SNMP_COMMUNITY}}'=> $nas['snmp_community'] ?: 'mesh-ro',
             '{{PORTAL_HOST}}'   => $portalHost,
-            '{{PORTAL_URL}}'    => 'https://' . $portalHost,
+            '{{PORTAL_URL}}'    => $this->portalUrl($tenant),
         ];
+    }
+
+    /** Render the MikroTik hotspot login.html that hands clients to the portal. */
+    public function hotspotLogin(array $tenant): string
+    {
+        $tpl = file_get_contents(__DIR__ . '/../provisioning/templates/hotspot-login.html.tpl');
+        return strtr($tpl, [
+            '{{PORTAL_URL}}'  => $this->portalUrl($tenant),
+            '{{SLUG}}'        => $tenant['slug'],
+            '{{TENANT_NAME}}' => $tenant['name'],
+        ]);
     }
 
     public function mikrotikScript(array $tenant, array $peer): string

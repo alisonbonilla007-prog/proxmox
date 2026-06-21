@@ -65,7 +65,9 @@ function handle_tenant_admin(string $path, PDO $pdo, Auth $auth, array $tenant, 
                 flash('success', 'Session disconnected.'); redirect($base . '&s=sessions');
             }
             if ($a === 'activate_peer') {
-                $ok = (new Provision($pdo, $config))->savePublicKey($tid, $_POST['public_key'] ?? '');
+                $prov = new Provision($pdo, $config);
+                $ok = $prov->savePublicKey($tid, $_POST['public_key'] ?? '');
+                if ($ok && !empty($_POST['router_type'])) $prov->setRouterType($tid, $_POST['router_type']);
                 flash($ok ? 'success' : 'error', $ok ? 'Router public key saved — tunnel activated.' : 'Invalid public key format.');
                 redirect('/admin/onboarding?tenant=' . $tenant['slug']);
             }
@@ -93,6 +95,9 @@ function handle_tenant_admin(string $path, PDO $pdo, Auth $auth, array $tenant, 
             'tenant' => $tenant, 'peer' => $peer,
             'mikrotik' => $prov->mikrotikScript($tenant, $peer),
             'pfsense'  => $prov->pfsenseSteps($tenant, $peer),
+            'hotspotLogin' => $prov->hotspotLogin($tenant),
+            'portalUrl' => $prov->portalUrl($tenant),
+            'routerType' => $prov->routerType($tid),
             'isSuper' => false,
             'activateAction' => '/admin?tenant=' . $tenant['slug'],
             'backUrl' => $base, 'backLabel' => '← Dashboard',
@@ -121,10 +126,11 @@ function handle_tenant_admin(string $path, PDO $pdo, Auth $auth, array $tenant, 
         $u = $r['username'];
         $issued[$u] ??= ['username'=>$u,'password'=>'','timeout'=>0,'group'=>'','up'=>0,'down'=>0,'online'=>isset($online[$u])];
         if ($r['attribute']==='Cleartext-Password') $issued[$u]['password']=$r['value'];
+        if ($r['attribute']==='Max-All-Session') $issued[$u]['timeout']=(int)$r['value']; // total budget
     }
     foreach ($rr as $r) {
         if (!isset($issued[$r['username']])) continue;
-        if ($r['attribute']==='Session-Timeout') $issued[$r['username']]['timeout']=(int)$r['value'];
+        if ($r['attribute']==='Session-Timeout') $issued[$r['username']]['timeout']=(int)$r['value']; // legacy vouchers
         if ($r['attribute']==='pfSense-Bandwidth-Max-Up') $issued[$r['username']]['up']=(int)$r['value'];
         if ($r['attribute']==='pfSense-Bandwidth-Max-Down') $issued[$r['username']]['down']=(int)$r['value'];
     }
